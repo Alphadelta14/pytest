@@ -7,6 +7,7 @@ import traceback
 # for transferring markers
 import _pytest._code
 from _pytest.config import hookimpl
+from _pytest.fixtures import fixture
 from _pytest.outcomes import fail, skip, xfail
 from _pytest.python import transfer_markers, Class, Module, Function
 
@@ -31,12 +32,6 @@ class UnitTestCase(Class):
         cls = self.obj
         if getattr(cls, '__unittest_skip__', False):
             return  # skipped
-        setup = getattr(cls, 'setUpClass', None)
-        if setup is not None:
-            setup()
-        teardown = getattr(cls, 'tearDownClass', None)
-        if teardown is not None:
-            self.addfinalizer(teardown)
         super(UnitTestCase, self).setup()
 
     def collect(self):
@@ -44,9 +39,25 @@ class UnitTestCase(Class):
         cls = self.obj
         if not getattr(cls, "__test__", True):
             return
+        module = self.getparent(Module).obj
+
+        setup = getattr(cls, 'setUpClass', None)
+        teardown = getattr(cls, 'tearDownClass', None)
+        if setup or teardown:
+            # If we have either a setUpClass and tearDownClass, emulate a class fixture
+
+            @fixture(scope='class', autouse=True)
+            def unittest_fixture(cls):
+                if setup:
+                    setup()
+                yield
+                if teardown:
+                    teardown()
+            transfer_markers(unittest_fixture, cls, module)
+            cls.unittest_fixture = unittest_fixture
+
         self.session._fixturemanager.parsefactories(self, unittest=True)
         loader = TestLoader()
-        module = self.getparent(Module).obj
         foundsomething = False
         for name in loader.getTestCaseNames(self.obj):
             x = getattr(self.obj, name)
